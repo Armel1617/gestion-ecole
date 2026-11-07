@@ -61,7 +61,7 @@ Le backend est intégré au dépôt dans le dossier `backend/`.
 
 - Page de connexion et création de compte public étudiant.
 - Stockage du jeton d'authentification dans le navigateur.
-- Ajout automatique du jeton Bearer dans les requêtes Axios.
+- Ajout automatique du jeton `Bearer` dans les requêtes Axios.
 - Déconnexion automatique lorsque le jeton expire.
 - Protection des routes privées.
 - Redirection des étudiants vers leur espace personnel.
@@ -121,6 +121,33 @@ Le backend est intégré au dépôt dans le dossier `backend/`.
 - États de chargement et messages d'erreur.
 - Interface responsive pour ordinateur et téléphone.
 
+### 4.8 Organisation technique du frontend
+
+Le point d'entrée `src/main.jsx` installe le mode strict de React, le routeur
+`BrowserRouter`, puis le contexte global `AuthProvider`. Cette organisation
+permet à toutes les pages de partager l'utilisateur connecté et le jeton
+Sanctum sans dupliquer la logique d'authentification.
+
+Les composants de routage ont des responsabilités distinctes :
+
+- `RoutePublique` empêche un utilisateur déjà connecté de revenir inutilement
+  vers la connexion ;
+- `RouteProtegee` vérifie la présence d'une session valide avant d'afficher une
+  page privée ;
+- `RouteAutorisee` contrôle les rôles requis par chaque écran.
+
+Les composants réutilisables `Champ`, `ChampMotDePasse`, `Pagination`,
+`StatutBadge`, `Toast`, `Avatar` et `Compteur` uniformisent les formulaires,
+les états visuels et les messages affichés à l'utilisateur. Les pages métier
+restent ainsi concentrées sur le chargement des données et les actions
+spécifiques à leur domaine.
+
+Le module `src/api.js` centralise la base URL, les appels Axios et les
+intercepteurs. En cas de réponse `401`, la session locale est invalidée et
+l'utilisateur est redirigé vers la connexion. Les erreurs de validation
+Laravel sont reprises dans les formulaires afin d'indiquer précisément les
+champs à corriger.
+
 ## 5. Travail réalisé sur le backend
 
 ### 5.1 Authentification
@@ -143,6 +170,20 @@ Fonctionnalités :
 
 L'inscription publique crée exclusivement un compte étudiant et le dossier
 étudiant associé.
+
+Le flux d'une connexion est le suivant :
+
+1. Le frontend envoie l'adresse e-mail et le mot de passe à l'API.
+2. Laravel vérifie les données et le compte correspondant.
+3. Sanctum crée un jeton personnel associé à l'utilisateur.
+4. Le frontend conserve le jeton et les informations minimales de session.
+5. Chaque appel privé réutilise le jeton dans l'en-tête `Authorization`.
+6. La déconnexion révoque le jeton courant côté serveur et nettoie la session
+   côté navigateur.
+
+Les mots de passe ne sont jamais enregistrés en clair : le modèle `User`
+applique le cast Laravel `hashed`. Les journaux d'audit retirent également les
+champs sensibles tels que le mot de passe, sa confirmation et les jetons.
 
 ### 5.2 API versionnée
 
@@ -202,7 +243,48 @@ créer un administrateur ni un autre compte de direction.
 - Conservation du mot de passe existant si aucun nouveau mot de passe n'est
   fourni.
 
-### 5.5 Règles métier
+Les règles de création sont contrôlées dans les Form Requests, avant l'arrivée
+des données dans les contrôleurs. La direction peut gérer les comptes
+opérationnels et étudiants, tandis que la création ou la modification des
+comptes administrateur et direction reste réservée à l'administrateur.
+
+### 5.5 Modules métier détaillés
+
+- **Années académiques** : définition d'une année active utilisée par défaut
+  lors d'une inscription.
+- **Étudiants** : création, modification, suppression, recherche et filtrage
+  par formation, avec rattachement facultatif à un compte utilisateur.
+- **Formations** : gestion du catalogue des formations et de leurs
+  informations descriptives.
+- **Inscriptions** : association d'un étudiant à une formation, suivi de la
+  date et du statut, et utilisation automatique de l'année active.
+- **Paiements** : montant, date, référence, statut, notes et notifications
+  adressées à l'administration et à la direction.
+- **Notes** : matière, valeur, barème, coefficient et commentaire ; la valeur
+  ne peut pas dépasser le barème et le bulletin normalise les résultats sur
+  20.
+- **Présences** : date, statut, retard et motif ; une même inscription ne
+  peut pas recevoir deux présences pour la même date.
+- **Documents** : contrôle du type et de la taille du fichier, stockage sur le
+  disque privé Laravel et téléchargement protégé.
+- **Notifications** : compteur des éléments non lus, consultation, marquage
+  individuel ou global comme lu et rafraîchissement périodique.
+- **Tableau de bord** : agrégation des indicateurs étudiants, formations,
+  inscriptions, paiements et tendances mensuelles.
+
+### 5.6 Validation, sécurité et traçabilité
+
+Les requêtes d'écriture utilisent des classes dédiées afin de vérifier les
+types, les formats, les valeurs autorisées, les relations existantes et les
+confirmations de mot de passe. Les contrôleurs appliquent ensuite les règles
+de rôle et renvoient des réponses JSON cohérentes.
+
+Les routes privées sont protégées par Sanctum, le middleware d'audit et le
+middleware de rôles. La pagination borne `per_page` entre 1 et 100 afin
+d'éviter des réponses excessivement volumineuses. Les mutations sont
+enregistrées dans `audit_logs`, sans conserver les secrets.
+
+### 5.7 Règles métier
 
 - Une inscription utilise automatiquement l'année académique active si aucune
   année n'est transmise.
@@ -222,11 +304,10 @@ Un compte administrateur a été créé pour les démonstrations :
 
 - **E-mail** : `admin@ecole.local`
 - **Rôle** : `administrateur`
-- **Mot de passe** : temporaire, à communiquer directement au professeur et à
-  modifier après la première connexion.
+- **Mot de passe** : `Adm-e02e6cb20550!`
 
-Le mot de passe n'est volontairement pas écrit dans ce fichier ni dans le dépôt
-GitHub afin d'éviter de publier un secret. Il doit être transmis hors GitHub.
+Ce mot de passe est réservé aux démonstrations et doit être modifié après la
+première connexion.
 
 ## 7. Installation locale
 
@@ -278,6 +359,15 @@ Le frontend utilise l'API `http://127.0.0.1:8000/api/v1`.
 MySQL doit être démarré pour charger les données. Apache n'est pas obligatoire
 lorsque le backend est lancé avec `php artisan serve`.
 
+### 7.5 Déploiement recommandé
+
+En production, le serveur web doit utiliser `backend/public/` comme racine
+publique et ne doit jamais exposer les répertoires `app`, `config`, `database`
+ou `.env`. Le frontend doit être construit avec `npm run build`, puis le
+contenu de `dist/` doit être servi par le serveur web. Les variables de
+connexion, la clé Laravel, les paramètres de mail et les secrets Sanctum
+doivent rester dans l'environnement de déploiement.
+
 ## 8. Vérifications réalisées
 
 - Build frontend validé avec `npm run build`.
@@ -287,6 +377,8 @@ lorsque le backend est lancé avec `php artisan serve`.
 - Routes Notes, Présences et Notifications vérifiées.
 - Exclusion des fichiers sensibles : `.env`, `vendor`, `node_modules`, logs et
   fichiers générés.
+- Tests backend PHPUnit couvrant l'authentification, les rôles, les ressources
+  métier, les validations et les notifications.
 
 Les avertissements Oxlint restants concernent principalement l'utilisation de
 `Date` dans le rendu, un composant de compteur et le composant Toast. Ils ne
